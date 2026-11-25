@@ -1,0 +1,46 @@
+name: Exam site watch
+
+# Every 5 minutes (GitHub may run it a few minutes late at busy times).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Health check (server answers and reports ok)
+        run: |
+          for i in 1 2 3; do
+            body=$(curl -fsS --max-time 20 https://exam.narainaviation.com/health) && echo "$body" | grep -q '"ok":true' && { echo "OK: $body"; exit 0; }
+            echo "Attempt $i failed, retrying in 30 seconds"; sleep 30
+          done
+          echo "FAILED: /health did not answer ok after 3 attempts"; exit 1
+
+      - name: Sign-in page loads
+        run: |
+          for i in 1 2 3; do
+            curl -fsS --max-time 20 https://exam.narainaviation.com/login.html | grep -qi "<title" && { echo "OK"; exit 0; }
+            echo "Attempt $i failed, retrying in 30 seconds"; sleep 30
+          done
+          echo "FAILED: /login.html did not load after 3 attempts"; exit 1
+
+      - name: Home address answers
+        run: |
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 https://exam.narainaviation.com/)
+          echo "Status $code"
+          case "$code" in 200|301|302|303|307|308) exit 0 ;; *) echo "FAILED: / returned $code"; exit 1 ;; esac
+
+      # GitHub switches off scheduled checks in a repository with no activity for 60 days.
+      # Re-enabling on every run keeps the watch running.
+      - name: Keep the schedule switched on
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/watch.yml/enable" || true
